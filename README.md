@@ -146,6 +146,8 @@ app.start();
 
 내장 Limiter는 토큰 버킷 방식으로 `onReceive` 실행 빈도를 제어합니다. 설정을 전달하지 않으면 `interval=1000ms`, `invoke=100`이 기본값입니다.
 
+> `ratelimit`/`limiterConfigs` 옵션을 활성화하면 내부적으로 메시지를 하나씩 잘라 `[Message]` 배열 형태로 `onReceive`에 전달합니다. 처리량 제어가 메시지 단위로 일어나기 때문에 이 경우 콜백마다 항상 단일 메시지만 들어옵니다.
+
 ```typescript
 const throttled = new Consumer({
   queueUrl: process.env.SQS_QUEUE_URL!,

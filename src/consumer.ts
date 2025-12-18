@@ -34,7 +34,7 @@ export default class Consumer {
     private stopped: boolean = true; // Consumer 중지 상태 플래그
 
     private concurrency: number; // 동시에 실행할 Consumer 수
-    private limiter: Limiter;
+    private limiter: Limiter | null = null;
 
     /**
      * Consumer 인스턴스를 생성합니다.
@@ -66,7 +66,9 @@ export default class Consumer {
         }
 
         this.concurrency = configs.concurrency || 1;
-        this.limiter = new Limiter(configs.limiterConfigs || { interval: 1000, invoke: 100 });
+        if (configs.limiterConfigs) {
+            this.limiter = new Limiter(configs.limiterConfigs);
+        }
 
         this.sqsClient = new SQSClient({
             credentials: {
@@ -125,10 +127,21 @@ export default class Consumer {
                         VisibilityTimeout: this.visibilityTimeout,
                     })
                 );
+
+                if (!data.Messages) {
+                    continue;
+                }
+
                 // 메시지 수신 콜백 실행
-                await this.limiter.exec(async () => {
+                if (this.limiter) {
+                    for (let i = 0; i < data.Messages.length; i++) {
+                        await this.limiter.exec(async () => {
+                            await this.execOnReceive([data.Messages![i]]);
+                        });
+                    }
+                } else {
                     await this.execOnReceive(data.Messages);
-                });
+                }
             } catch (err) {
                 // 폴링 중 오류 발생 시 오류 콜백 실행
                 this.execOnError('polling', err, null);
