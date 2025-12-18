@@ -1,7 +1,7 @@
-import { Configs, Options } from "./types/limiter.type";
+import { Configs, Options } from "../types/limiter.type";
 
 export default class Limiter {
-    private interval: number = 1000;
+    private intervalMs: number = 1000;
     private invoke: number = 100;
     private options: Options = {
         async: false,
@@ -17,7 +17,7 @@ export default class Limiter {
 
     async exec(cb: () => any): Promise<void> {
         if (this.waitingRemainingMs) {
-            await this.wait(this.waitingRemainingMs);
+            await this.waitMs(this.waitingRemainingMs);
             // 한번 기다렸으면 더 이상 기다리지 않음.
             this.waitingRemainingMs = null;
         }
@@ -26,7 +26,7 @@ export default class Limiter {
             await this.waitDraft();
         }
 
-        if (this.now() >= this.draft + this.interval) {
+        if (this.now() >= this.draft + this.intervalMs) {
             this.reset();
         }
 
@@ -42,7 +42,7 @@ export default class Limiter {
         }
 
         if (delay >= 0) {
-            await this.wait(delay);
+            await this.waitMs(delay);
         }
     }
 
@@ -52,7 +52,7 @@ export default class Limiter {
         // TODO: 원래 다음 실행 시점에 이전 config값으로 실행되어야 더 정확함, 현 구현은 async 옵션이 있을 경우 문제가 생김.
         this.waitingRemainingMs = !immediately ? this.getRemainingMs() : null;
 
-        this.interval = configs.interval;
+        this.intervalMs = configs.interval;
         this.invoke = configs.invoke;
 
         if (configs.options) {
@@ -64,17 +64,19 @@ export default class Limiter {
     }
 
     private getRemainingMs(): number {
-        const remainingMs = this.draft + this.interval + 1 - this.now();
+        const remainingMs = this.draft + this.intervalMs + 1 - this.now();
         if (remainingMs <= 0) {
             return 0;
         }
+
         return remainingMs;
     }
 
     private waitDraft(): Promise<true> {
         const remainingMs = this.getRemainingMs();
         if (!remainingMs) return Promise.resolve(true);
-        return this.wait(this.draft + this.interval + 1 - this.now());
+
+        return this.waitMs(this.draft + this.intervalMs + 1 - this.now());
     }
 
     private reset(): void {
@@ -82,11 +84,11 @@ export default class Limiter {
         this.draft = this.now();
     }
 
-    private async wait(t: number): Promise<true> {
+    private async waitMs(delayMs: number): Promise<true> {
         return new Promise((resolve) => {
             setTimeout(() => {
                 resolve(true);
-            }, t);
+            }, delayMs);
         });
     }
 

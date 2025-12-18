@@ -10,8 +10,9 @@ import { NodeHttpHandler } from '@aws-sdk/node-http-handler';
 import { randomUUID } from 'crypto';
 import { Agent } from 'https';
 import { Configs, ErrorType, Messages, OnError, OnProcessed, OnReceive } from './types/consumer.type';
-import Limiter from './limiter';
-
+import Limiter from './utils/limiter';
+import { exponentialBackoff } from './utils/exponentialBackoff';
+import { Configs as LimiterConfigs } from './types/limiter.type';
 /**
  * AWS SQS Consumer 클래스
  */
@@ -44,10 +45,10 @@ export default class Consumer {
         this.queueUrl = configs.queueUrl;
         this.attributeNames = configs.attributeNames || [];
         this.messageAttributeNames = configs.messageAttributeNames || [];
-        this.batchSize = configs.batchSize || 10; // 기본 배치 크기 10으로 설정
+        this.batchSize = configs.batchSize || 10; // 0이거나 없으면 10으로 설정
         this.visibilityTimeout = configs.visibilityTimeout;
-        this.waitTimeSeconds = configs.waitTimeSeconds ?? 20; // 기본 대기 시간 20초로 설정 (nullish coalescing)
-        this.pollingRetryTime = configs.pollingRetryTime ?? 10000; // 기본 폴링 재시도 시간 10초로 설정
+        this.waitTimeSeconds = configs.waitTimeSeconds ?? 10; // 없으면 10초로 설정
+        this.pollingRetryTime = configs.pollingRetryTime ?? 1000; // 없으면 1초로 설정
         this.onReceive = configs.onReceive;
         this.onError = configs.onError;
         this.onProcessed = configs.onProcessed;
@@ -65,7 +66,7 @@ export default class Consumer {
             throw new Error('Invalid AWS Region. (configs.region or process.env.AWS_REGION)');
         }
 
-        this.concurrency = configs.concurrency || 1;
+        this.concurrency = configs.concurrency || 1; // 0이거나 없으면 1로 설정
         if (configs.limiterConfigs) {
             this.limiter = new Limiter(configs.limiterConfigs);
         }
@@ -94,7 +95,6 @@ export default class Consumer {
      */
     start() {
         if (!this.stopped) return; // 이미 실행 중이면 반환
-
         this.stopped = false;
 
         for (let i = 0; i < this.concurrency; i++) {
@@ -134,6 +134,7 @@ export default class Consumer {
 
                 // 메시지 수신 콜백 실행
                 if (this.limiter) {
+                    // 정확한 함수 실행 횟수를 보장하기 위해 하나씩 처리.
                     for (let i = 0; i < data.Messages.length; i++) {
                         await this.limiter.exec(async () => {
                             await this.execOnReceive([data.Messages![i]]);
@@ -160,12 +161,14 @@ export default class Consumer {
      */
     async deleteMessage(message: Message) {
         try {
-            await this.sqsClient.send(
-                new DeleteMessageCommand({
-                    QueueUrl: this.queueUrl,
-                    ReceiptHandle: message.ReceiptHandle,
-                })
-            );
+            await exponentialBackoff(async () => {
+                await this.sqsClient.send(
+                    new DeleteMessageCommand({
+                        QueueUrl: this.queueUrl,
+                        ReceiptHandle: message.ReceiptHandle,
+                    })
+                );
+            });
             // 메시지 처리 완료 콜백 실행
             this.execOnProcessed(message);
         } catch (err) {
@@ -213,12 +216,15 @@ export default class Consumer {
         }
 
         try {
-            const result = await this.sqsClient.send(
-                new DeleteMessageBatchCommand({
-                    QueueUrl: this.queueUrl,
-                    Entries: batchEntries,
-                })
-            );
+            const result = await exponentialBackoff(async () => {
+                const result = await this.sqsClient.send(
+                    new DeleteMessageBatchCommand({
+                        QueueUrl: this.queueUrl,
+                        Entries: batchEntries,
+                    })
+                );
+                return result;
+            });
 
             // 성공적으로 삭제된 메시지 처리
             if (result.Successful) {
@@ -249,6 +255,16 @@ export default class Consumer {
         } catch (err) {
             // 전체 배치 명령 실행 중 오류 발생 시
             this.execOnError('deleteMessageBatch', err, validMessages);
+        }
+    }
+
+    /**
+     * 실행 중 Limiter 설정을 변경합니다.
+     * @param configs Limiter 설정 객체
+     */
+    setLimiterConfigs(configs: LimiterConfigs) {
+        if (this.limiter) {
+            this.limiter.setConfigs(configs);
         }
     }
 
