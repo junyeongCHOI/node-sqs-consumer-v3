@@ -10,6 +10,7 @@ import { NodeHttpHandler } from '@aws-sdk/node-http-handler';
 import { randomUUID } from 'crypto';
 import { Agent } from 'https';
 import { Configs, ErrorType, Messages, OnError, OnProcessed, OnReceive } from './types/consumer.type';
+import Limiter from './limiter';
 
 /**
  * AWS SQS Consumer 클래스
@@ -32,6 +33,9 @@ export default class Consumer {
     private readonly onProcessed?: OnProcessed; // 메시지 처리 완료 콜백
     private stopped: boolean = true; // Consumer 중지 상태 플래그
 
+    private concurrency: number; // 동시에 실행할 Consumer 수
+    private limiter: Limiter;
+
     /**
      * Consumer 인스턴스를 생성합니다.
      * @param configs Consumer 설정 객체
@@ -47,7 +51,6 @@ export default class Consumer {
         this.onReceive = configs.onReceive;
         this.onError = configs.onError;
         this.onProcessed = configs.onProcessed;
-
         const accessKeyId = configs.accessKeyId || process.env.AWS_ACCESS_KEY_ID;
         const secretAccessKey = configs.secretAccessKey || process.env.AWS_SECRET_ACCESS_KEY;
         const region = configs.region || process.env.AWS_REGION;
@@ -62,6 +65,9 @@ export default class Consumer {
             throw new Error('Invalid AWS Region. (configs.region or process.env.AWS_REGION)');
         }
 
+        this.concurrency = configs.concurrency || 1;
+        this.limiter = new Limiter(configs.limiterConfigs || { interval: 1000, invoke: 100 });
+
         this.sqsClient = new SQSClient({
             credentials: {
                 accessKeyId: accessKeyId,
@@ -73,6 +79,7 @@ export default class Consumer {
                     configs.httpsAgent ||
                     new Agent({
                         keepAlive: true,
+                        maxSockets: this.concurrency * 25,
                         timeout: this.waitTimeSeconds * 1000 + 10 * 1000,
                     }),
             }),
@@ -87,7 +94,10 @@ export default class Consumer {
         if (!this.stopped) return; // 이미 실행 중이면 반환
 
         this.stopped = false;
-        this.runPollingLoop(); // 폴링 루프 시작
+
+        for (let i = 0; i < this.concurrency; i++) {
+            this.runPollingLoop();
+        }
     }
 
     /**
@@ -116,7 +126,9 @@ export default class Consumer {
                     })
                 );
                 // 메시지 수신 콜백 실행
-                await this.execOnReceive(data.Messages);
+                await this.limiter.exec(async () => {
+                    await this.execOnReceive(data.Messages);
+                });
             } catch (err) {
                 // 폴링 중 오류 발생 시 오류 콜백 실행
                 this.execOnError('polling', err, null);
@@ -232,7 +244,7 @@ export default class Consumer {
      */
     private async execOnReceive(message: Messages) {
         try {
-            await this.onReceive(message, this.sqsClient);
+            await this.onReceive(message);
         } catch (err) {
             this.execOnError('onReceive', err, message,);
         }
@@ -247,7 +259,7 @@ export default class Consumer {
     private async execOnError(type: ErrorType, err: any, message: Messages | Message | null | undefined) {
         try {
             if (!this.onError) return; // onError 콜백이 설정되지 않았으면 반환
-            await this.onError(type, err, message, this.sqsClient);
+            await this.onError(type, err, message);
         } catch (errInOnError) {
             // onError 콜백 실행 중 발생한 오류는 콘솔에 직접 출력 (무한 루프 방지)
             console.error('onError', errInOnError);
@@ -262,7 +274,7 @@ export default class Consumer {
     private async execOnProcessed(message: Message) {
         try {
             if (!this.onProcessed) return; // onProcessed 콜백이 설정되지 않았으면 반환
-            await this.onProcessed(message, this.sqsClient);
+            await this.onProcessed(message);
         } catch (err) {
             this.execOnError('onProcessed', err, message);
         }
