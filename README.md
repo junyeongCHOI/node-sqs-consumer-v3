@@ -1,14 +1,14 @@
 # Node SQS Consumer v3
 
-AWS SQS JavaScript SDK v3 기반의 경량 Consumer 유틸리티입니다. TypeScript 타입, 커스터마이즈 가능한 콜백, 그리고 속도 제한/멀티 컨슈머 헬퍼를 제공하여 운영 중인 큐 워크로드를 안전하게 처리할 수 있습니다.
+AWS SQS JavaScript SDK v3 기반의 경량 Consumer 유틸리티입니다. 단일 `Consumer` 인스턴스로 롱 폴링, 안전한 삭제, 동시 실행, 처리량 제한까지 한 번에 구성할 수 있습니다.
 
 ## 주요 특징
-- TypeScript-first: `Configs`, `ErrorType` 등 모든 API가 타입으로 제공되어 IDE 가이드를 바로 활용할 수 있습니다.
-- 안전한 콜백 흐름: `onReceive` → `deleteMessage(s)` → `onProcessed` 순서가 명확하며 오류는 `onError`로 한 곳에서 수집합니다.
-- HTTP Keep-Alive: 기본 `https.Agent`가 SQS 롱 폴링에 맞춰 설정되어 불필요한 커넥션 생성을 줄입니다.
-- 유연한 배치 삭제: `deleteMessageBatch`로 한번에 최대 10개까지 삭제하고, 실패한 항목에 대한 오류 정보도 콜백으로 확인합니다.
-- Concurrency + Rate Limit: `ConcurrencyHelper`와 `Limiter`를 통해 다중 Consumer 실행과 TPS 제한을 간단히 구성할 수 있습니다.
-- 배포 친화적 구조: 빌드 결과(`dist/`)만 포함되므로 패키지를 설치하면 바로 실행할 수 있습니다.
+- TypeScript-first: `Configs`, `ErrorType` 등 모든 API를 타입으로 제공하여 IDE에서 바로 확인할 수 있습니다.
+- 단일 Consumer로 동시 폴링: `concurrency` 옵션 하나로 여러 폴링 루프를 돌리며 동일한 콜백을 재사용합니다.
+- 토큰 버킷 기반 처리량 제한: `limiterConfigs`를 통해 `onReceive` 실행 빈도와 후속 지연을 제어합니다.
+- HTTP Keep-Alive: 기본 `https.Agent`가 큐 롱 폴링에 맞춰 연결 수와 타임아웃을 자동으로 조정합니다.
+- 유연한 삭제 유틸리티: `deleteMessage`/`deleteMessagesBatch`로 처리 흐름을 제어하고 `onProcessed`에서 후처리할 수 있습니다.
+- 배포 친화적 구조: 번들 결과(`dist/`)만 포함되어 설치 즉시 실행 가능합니다.
 
 ## 목차
 - [설치](#설치)
@@ -38,22 +38,26 @@ import Consumer from 'node-sqs-consumer-v3';
 import { Message } from '@aws-sdk/client-sqs';
 
 const app = new Consumer({
-  // accessKeyId, secretAccessKey, region을 직접 지정해도 되고 환경 변수를 사용해도 됩니다.
   queueUrl: process.env.SQS_QUEUE_URL!,
   batchSize: 10,
-  visibilityTimeout: 30,
   waitTimeSeconds: 20,
-  pollingRetryTime: 10_000,
-  async onReceive(messages, sqsClient) {
+  concurrency: 2,
+  limiterConfigs: {
+    interval: 1000,
+    invoke: 200,
+    options: { async: true, delay: 5 },
+  },
+  async onReceive(messages) {
     if (!messages?.length) return;
 
     for (const message of messages) {
       console.log('Received:', message.MessageId, message.Body);
-      // 비즈니스 로직...
+
+      await doBusinessLogic(message);
       await app.deleteMessage(message);
     }
   },
-  async onError(type, err, message, sqsClient) {
+  async onError(type, err, message) {
     console.error(`[${type}]`, err, message);
   },
   async onProcessed(message) {
@@ -69,10 +73,10 @@ app.start();
 
 ## 메시지 처리 흐름
 1. `start()`가 롱 폴링을 시작하면 AWS SQS에서 메시지를 가져옵니다.
-2. 수신한 메시지는 `onReceive(messages, sqsClient)` 콜백으로 전달됩니다.
+2. 수신한 메시지는 `onReceive(messages)` 콜백으로 전달됩니다.
 3. 메시지를 처리한 뒤 `deleteMessage` 또는 `deleteMessagesBatch`로 큐에서 제거합니다.
-4. 삭제가 성공하면 `onProcessed(message, sqsClient)`가 호출됩니다.
-5. 폴링/콜백/삭제 중 오류가 발생하면 `onError(type, err, payload, sqsClient)` 한 곳으로 모아서 다룹니다.
+4. 삭제가 성공하면 `onProcessed(message)`가 호출됩니다.
+5. 폴링/콜백/삭제 중 오류가 발생하면 `onError(type, err, payload)` 한 곳에서 처리합니다.
 
 ## Consumer 설정
 
@@ -90,10 +94,15 @@ app.start();
 | `visibilityTimeout` | `number` | 아니요 | 큐 설정 | 메시지 재표시 전까지 숨길 시간(초). |
 | `waitTimeSeconds` | `number` | 아니요 | `20` | 롱 폴링 대기 시간(초). |
 | `pollingRetryTime` | `number` | 아니요 | `10000` | 폴링 실패 시 재시도까지 대기하는 시간(ms). |
-| `httpsAgent` | `Agent` | 아니요 | `new Agent({ keepAlive: true })` | 기본값은 폴링 대기 시간 + 10초 타임아웃을 가진 Keep-Alive Agent입니다. |
-| `onReceive` | `(messages, sqsClient) => Promise<void>` | 예 | - | 메시지 수신 콜백. `sqsClient`를 그대로 받아 추가 SDK 호출도 가능합니다. |
-| `onError` | `(type, err, payload, sqsClient) => Promise<void>` | 아니요 | - | 모든 오류를 한 곳에서 처리하는 콜백. |
-| `onProcessed` | `(message, sqsClient) => Promise<void>` | 아니요 | - | `deleteMessage(s)` 성공 이후 호출됩니다. |
+| `httpsAgent` | `Agent` | 아니요 | `new Agent({ keepAlive: true, maxSockets: concurrency * 25, timeout: waitTimeSeconds * 1000 + 10_000 })` | Keep-Alive가 적용된 기본 Agent를 커스터마이즈할 수 있습니다. |
+| `onReceive` | `(messages: Message[] \| undefined) => Promise<void>` | 예 | - | 메시지 수신 콜백. 빈 응답(`undefined`)도 전달됩니다. |
+| `onError` | `(type, err, payload) => Promise<void>` | 아니요 | - | 모든 오류를 한 곳에서 처리하는 콜백. |
+| `onProcessed` | `(message: Message) => Promise<void>` | 아니요 | - | 삭제에 성공했을 때 후처리할 수 있는 콜백. |
+| `concurrency` | `number` | 아니요 | `1` | 동시에 실행할 폴링 루프 수. 값이 클수록 병렬 처리량이 늘어납니다. |
+| `limiterConfigs.interval` | `number` | 아니요 | `1000` | 토큰 버킷 윈도우 길이(ms). |
+| `limiterConfigs.invoke` | `number` | 아니요 | `100` | 윈도우당 허용할 `onReceive` 호출 횟수. |
+| `limiterConfigs.options.async` | `boolean` | 아니요 | `false` | 콜백이 Promise를 반환한다면 `true`로 설정해 순차적으로 대기합니다. |
+| `limiterConfigs.options.delay` | `number` | 아니요 | `0` | 각 실행이 끝난 뒤 추가로 기다릴 시간(ms). |
 
 ## 에러 타입
 
@@ -113,47 +122,48 @@ app.start();
 
 ## 고급 사용법
 
-### 멀티 컨슈머 + 속도 제한 (`ConcurrencyHelper`)
+### 동시 폴링 (`concurrency`)
 
-`ConcurrencyHelper`는 동일한 `Consumer` 구성을 여러 개 띄워 병렬로 폴링하면서, 내부적으로 `Limiter`를 통해 전체 처리 속도를 제어합니다.
+단일 Consumer 인스턴스가 내부적으로 여러 폴링 루프를 돌리기 때문에 `concurrency`만 조정하면 됩니다. 각 루프는 동일한 `Limiter`와 콜백을 공유합니다.
 
 ```typescript
-import { Consumer, ConcurrencyHelper } from 'node-sqs-consumer-v3';
-
-const consumerConfigs = { /* Consumer Configs */ };
-
-const helper = new ConcurrencyHelper(consumerConfigs, {
-  concurrency: 4,      // 동시에 실행할 Consumer 수
-  interval: 1000,      // 제한 기간(ms)
-  invoke: 200,         // 기간 내 실행 가능한 onReceive 횟수
-  options: {
-    async: true,       // limiter.exec 콜백을 await
-    delay: 5,          // 각 실행 후 추가 대기(ms)
+const app = new Consumer({
+  queueUrl: process.env.SQS_QUEUE_URL!,
+  concurrency: 4,        // 동시에 4개의 ReceiveMessage를 돌립니다.
+  batchSize: 5,
+  async onReceive(messages) {
+    // ...
+  },
+  async onError(type, err, payload) {
+    // ...
   },
 });
 
-helper.start();
-// 필요 시 helper.stop();
+app.start();
+```
 
-// 실행 중에도 속도 제한 재설정 가능
-helper.setLimiterConfigs({
-  interval: 2000,
-  invoke: 150,
+### 처리량 제한 (`limiterConfigs`)
+
+내장 Limiter는 토큰 버킷 방식으로 `onReceive` 실행 빈도를 제어합니다. 설정을 전달하지 않으면 `interval=1000ms`, `invoke=100`이 기본값입니다.
+
+```typescript
+const throttled = new Consumer({
+  queueUrl: process.env.SQS_QUEUE_URL!,
+  limiterConfigs: {
+    interval: 1000,
+    invoke: 60,              // 초당 60번만 onReceive 실행
+    options: { async: true, delay: 10 },
+  },
+  async onReceive(messages) {
+    // ...
+  },
+  async onError(type, err, payload) {
+    // ...
+  },
 });
 ```
 
-### `Limiter` 설정
-
-`Limiter`는 독립적으로도 사용할 수 있는 간단한 토큰 버킷 형태의 속도 제한기입니다.
-
-| 속성 | 타입 | 기본값 | 설명 |
-| --- | --- | --- | --- |
-| `interval` | `number` | `1000` | 윈도우 길이(ms). |
-| `invoke` | `number` | `100` | 각 윈도우에서 허용할 실행 횟수. |
-| `options.async` | `boolean` | `false` | `true`이면 콜백이 Promise를 반환한다고 가정하고 `await` 합니다. |
-| `options.delay` | `number` | `0` | 각 실행 끝난 뒤 추가로 대기할 시간(ms). |
-
-실행 중 `setConfigs`를 호출하면 남은 윈도우 시간만큼 대기한 후 새로운 설정을 적용합니다.
+현재 Limiter 설정은 인스턴스 생성 시에만 지정할 수 있습니다. 처리량이 급격히 달라지는 워크로드라면 여러 Consumer 인스턴스를 서로 다른 설정으로 구성하는 방법을 권장합니다.
 
 ## 개발 & 빌드
 
