@@ -15,7 +15,7 @@ export default class Limiter {
         this.setConfigs(configs, true);
     }
 
-    async exec(cb: () => any): Promise<void> {
+    async exec(cb: () => void | Promise<void>): Promise<void> {
         if (this.waitingRemainingMs) {
             await this.waitMs(this.waitingRemainingMs);
             // 한번 기다렸으면 더 이상 기다리지 않음.

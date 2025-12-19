@@ -1,6 +1,5 @@
 import {
     Message,
-    SQSClient,
 } from '@aws-sdk/client-sqs';
 import { Agent } from 'https';
 import { Configs as LimiterConfigs } from './limiter.type';
@@ -30,7 +29,7 @@ export type ErrorType = 'polling' | 'onReceive' | 'onProcessed' | 'deleteMessage
  * @param err 발생한 오류 객체입니다.
  * @param message 오류 발생 시 관련 메시지(들). 단일 메시지 또는 메시지 배열일 수 있습니다.
  */
-export type OnError = (type: ErrorType, err: any, message: Messages | Message | null | undefined) => Promise<void>;
+export type OnError = (type: ErrorType, err: unknown, message: Messages | Message | null | undefined) => Promise<void>;
 
 /**
  * Consumer 설정 객체 타입 정의

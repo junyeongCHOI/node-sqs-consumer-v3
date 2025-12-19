@@ -13,6 +13,7 @@ import { Configs, ErrorType, Messages, OnError, OnProcessed, OnReceive } from '.
 import Limiter from './utils/limiter';
 import { exponentialBackoff } from './utils/exponentialBackoff';
 import { Configs as LimiterConfigs } from './types/limiter.type';
+
 /**
  * AWS SQS Consumer 클래스
  */
@@ -285,7 +286,7 @@ export default class Consumer {
      * @param err 발생한 오류 객체
      * @param message 관련 메시지(들)
      */
-    private async execOnError(type: ErrorType, err: any, message: Messages | Message | null | undefined) {
+    private async execOnError(type: ErrorType, err: unknown, message: Messages | Message | null | undefined) {
         try {
             if (!this.onError) return; // onError 콜백이 설정되지 않았으면 반환
             await this.onError(type, err, message);
