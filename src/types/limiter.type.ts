@@ -3,7 +3,7 @@ export type Options = {
     delay: number;
 };
 
-export type Configs = {
+export type LimiterConfigs = {
     interval: number;
     invoke: number;
     options?: Partial<Options>;

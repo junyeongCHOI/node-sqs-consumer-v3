@@ -12,7 +12,7 @@ import { Agent } from 'https';
 import { Configs, ErrorType, Messages, OnError, OnProcessed, OnReceive } from './types/consumer.type';
 import Limiter from './utils/limiter';
 import { exponentialBackoff } from './utils/exponentialBackoff';
-import { Configs as LimiterConfigs } from './types/limiter.type';
+import { LimiterConfigs } from './types/limiter.type';
 
 /**
  * AWS SQS Consumer 클래스

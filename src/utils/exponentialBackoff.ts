@@ -21,8 +21,8 @@ function getExponentialBackoffDelay(attempt: number = 0, {
     baseDelayMs,
     maxDelayMs,
 }: ExponentialBackoffOptions = {
-        baseDelayMs: 50,
-        maxDelayMs: 1000,
+        baseDelayMs: 50, // 기본 지연 시간 50ms
+        maxDelayMs: 1000, // 최대 지연 시간 1초
     }): number {
     const sanitizedAttempt = Math.max(0, Math.floor(attempt));
     const rawDelay = Math.min(baseDelayMs * Math.pow(2, sanitizedAttempt), maxDelayMs);
@@ -38,6 +38,6 @@ function applyJitter(delay: number): number {
 }
 
 type ExponentialBackoffOptions = {
-    baseDelayMs: number; // 기본 지연 시간 50ms
-    maxDelayMs: number; // 최대 지연 시간 1초
+    baseDelayMs: number;
+    maxDelayMs: number;
 }

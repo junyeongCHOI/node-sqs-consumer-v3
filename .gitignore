@@ -15,5 +15,6 @@ yarn-error.log*
 
 # build
 /dist
+/.webpack-cache
 
 .vscode

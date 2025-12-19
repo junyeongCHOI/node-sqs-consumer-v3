@@ -1,4 +1,4 @@
-import { Configs, Options } from "../types/limiter.type";
+import { LimiterConfigs, Options } from "../types/limiter.type";
 
 export default class Limiter {
     private intervalMs: number = 1000;
@@ -11,7 +11,7 @@ export default class Limiter {
     private draft: number = 0;
     private waitingRemainingMs: number | null = null;
 
-    constructor(configs: Configs) {
+    constructor(configs: LimiterConfigs) {
         this.setConfigs(configs, true);
     }
 
@@ -47,7 +47,7 @@ export default class Limiter {
     }
 
 
-    setConfigs(configs: Configs, immediately: boolean = false) {
+    setConfigs(configs: LimiterConfigs, immediately: boolean = false) {
         // 설정값을 변경 시 남은 시간만큼 대기 할지 결정.
         // TODO: 원래 다음 실행 시점에 이전 config값으로 실행되어야 더 정확함, 현 구현은 async 옵션이 있을 경우 문제가 생김.
         this.waitingRemainingMs = !immediately ? this.getRemainingMs() : null;

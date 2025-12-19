@@ -2,7 +2,7 @@ import {
     Message,
 } from '@aws-sdk/client-sqs';
 import { Agent } from 'https';
-import { Configs as LimiterConfigs } from './limiter.type';
+import { LimiterConfigs } from './limiter.type';
 
 // SQS 메시지 또는 메시지 배열의 타입 별칭
 export type Messages = Message[] | undefined;
